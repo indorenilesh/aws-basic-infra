@@ -1,0 +1,70 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create an Amazon ECS Fargate cluster with standardized naming.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "ECS Cluster Configuration"
+        Parameters:
+          - ENV
+          - ORGANIZATION
+          - APPNAME
+
+Parameters:
+  ENV:
+    Description: Deployment environment
+    Type: String
+    AllowedValues:
+      - DEV
+      - STAGE
+      - PROD
+
+  ORGANIZATION:
+    Description: Organization or company name
+    Type: String
+    MinLength: 1
+    MaxLength: 30
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  APPNAME:
+    Description: Application name
+    Type: String
+    MinLength: 1
+    MaxLength: 30
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${ENV}-${ORGANIZATION}-${APPNAME}"
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 1
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-${APPNAME}"
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Application
+          Value: !Ref APPNAME
+
+Outputs:
+  ECSClusterName:
+    Description: ECS cluster name
+    Value: !Ref ECSCluster
+
+  ECSClusterArn:
+    Description: ECS cluster ARN
+    Value: !GetAtt ECSCluster.Arn

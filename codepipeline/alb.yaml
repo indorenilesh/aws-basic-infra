@@ -1,0 +1,114 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create an HTTP-only Application Load Balancer
+
+Parameters:
+  ENV:
+    Type: String
+    Description: Environment name (e.g. dev, test, prod)
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    ConstraintDescription: Use only letters, numbers, and hyphens.
+
+  ORGANIZATION:
+    Type: String
+    Description: Organization name
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    ConstraintDescription: Use only letters, numbers, and hyphens.
+
+  APP:
+    Type: String
+    Description: Application name
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    ConstraintDescription: Use only letters, numbers, and hyphens.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the ALB will be created
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least two subnets in different Availability Zones
+
+Resources:
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub '${ENV}-${ORGANIZATION}-${APP} ALB HTTP security group'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ENV}-${ORGANIZATION}-${APP}-alb-sg'
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${ENV}-${ORGANIZATION}-${APP}'
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ENV}-${ORGANIZATION}-${APP}'
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub '${ENV}-${ORGANIZATION}-${APP}-tg'
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: '200-399'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ENV}-${ORGANIZATION}-${APP}-tg'
+
+  HTTPListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+Outputs:
+  LoadBalancerName:
+    Description: Application Load Balancer name
+    Value: !Sub '${ENV}-${ORGANIZATION}-${APP}'
+
+  LoadBalancerDNSName:
+    Description: ALB DNS name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+
+  LoadBalancerURL:
+    Description: HTTP URL
+    Value: !Sub 'http://${ApplicationLoadBalancer.DNSName}'
+
+  LoadBalancerArn:
+    Description: ALB ARN
+    Value: !Ref ApplicationLoadBalancer
+
+  TargetGroupArn:
+    Description: Target group ARN
+    Value: !Ref ALBTargetGroup
+
+  SecurityGroupId:
+    Description: ALB security group ID
+    Value: !Ref ALBSecurityGroup

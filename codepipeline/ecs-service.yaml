@@ -1,0 +1,416 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Create an ECS Fargate service, IAM roles, task definition,
+  security group, CloudWatch log group, and ALB target group.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Application Configuration"
+        Parameters:
+          - ENV
+          - ORGANIZATION
+          - SERVICENAME
+          - ECSClusterName
+          - ContainerImage
+          - ContainerPort
+          - MINCPU
+          - MINMEMORY
+          - DesiredCount
+
+      - Label:
+          default: "Networking Configuration"
+        Parameters:
+          - VPCID
+          - SUBNETIDS
+          - SGNAME
+          - EXPOSESERVICE
+          - ALB
+          - ALBSecurityGroupId
+          - ALBRULEPATH
+          - ListenerRulePriority
+
+Parameters:
+  ENV:
+    Description: Deployment environment
+    Type: String
+    AllowedValues:
+      - DEV
+      - STAGE
+      - PROD
+
+  ORGANIZATION:
+    Description: Organization name
+    Type: String
+    MinLength: 1
+    MaxLength: 30
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  SERVICENAME:
+    Description: ECS service name
+    Type: String
+    MinLength: 1
+    MaxLength: 30
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  ECSClusterName:
+    Description: Existing ECS cluster name
+    Type: String
+
+  VPCID:
+    Description: VPC ID where the ECS service will run
+    Type: AWS::EC2::VPC::Id
+
+  SUBNETIDS:
+    Description: Comma-separated private subnet IDs (minimum two recommended)
+    Type: List<AWS::EC2::Subnet::Id>
+
+  SGNAME:
+    Description: Name suffix for the service security group
+    Type: String
+    Default: ServiceSG
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  EXPOSESERVICE:
+    Description: Whether to expose the service through an existing ALB
+    Type: String
+    AllowedValues:
+      - 'YES'
+      - 'NO'
+    Default: 'NO'
+
+  ALB:
+    Description: >
+      Existing ALB listener ARN (HTTPS listener recommended).
+      Required when EXPOSESERVICE is YES.
+    Type: String
+    Default: ''
+
+  ALBSecurityGroupId:
+    Description: >
+      Security group ID attached to the existing ALB.
+      Required when EXPOSESERVICE is YES.
+    Type: String
+    Default: ''
+
+  ALBRULEPATH:
+    Description: ALB path pattern, for example /api/*
+    Type: String
+    Default: '/*'
+    MaxLength: 128
+
+  ListenerRulePriority:
+    Description: Unique rule priority on the specified ALB listener
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 50000
+
+  ContainerImage:
+    Description: Container image URI, preferably an immutable image tag or digest
+    Type: String
+    Default: public.ecr.aws/docker/library/nginx:stable
+
+  ContainerPort:
+    Description: Port on which the container listens
+    Type: Number
+    Default: 80
+    MinValue: 1
+    MaxValue: 65535
+
+  MINCPU:
+    Description: Fargate task CPU units (256 = 0.25 vCPU)
+    Type: String
+    Default: '256'
+    AllowedValues:
+      - '256'
+      - '512'
+      - '1024'
+      - '2048'
+      - '4096'
+
+  MINMEMORY:
+    Description: Fargate task memory in MiB
+    Type: String
+    Default: '512'
+    AllowedValues:
+      - '512'
+      - '1024'
+      - '2048'
+      - '3072'
+      - '4096'
+      - '5120'
+      - '6144'
+      - '7168'
+      - '8192'
+      - '9216'
+      - '10240'
+      - '11264'
+      - '12288'
+      - '13312'
+      - '14336'
+      - '15360'
+      - '16384'
+      - '17408'
+      - '18432'
+      - '19456'
+      - '20480'
+      - '21504'
+      - '22528'
+      - '23552'
+      - '24576'
+      - '25600'
+      - '26624'
+      - '27648'
+      - '28672'
+      - '29696'
+      - '30720'
+
+  DesiredCount:
+    Description: Number of ECS tasks to run
+    Type: Number
+    Default: 1
+    MinValue: 1
+
+Conditions:
+  ExposeService: !Equals [!Ref EXPOSESERVICE, 'YES']
+
+Resources:
+
+  # CloudWatch Logs
+  ServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${ENV}-${ORGANIZATION}-${SERVICENAME}"
+      RetentionInDays: 30
+      Tags:
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Service
+          Value: !Ref SERVICENAME
+
+  # IAM role used by ECS to pull images and publish logs
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}-ExecutionRole"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Tags:
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Service
+          Value: !Ref SERVICENAME
+
+  # Application identity; attach application-specific permissions as needed
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}-TaskRole"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Service
+          Value: !Ref SERVICENAME
+
+  # Service security group
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Security group for ${ENV}-${ORGANIZATION}-${SERVICENAME}"
+      GroupName: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}-${SGNAME}"
+      VpcId: !Ref VPCID
+      SecurityGroupIngress: !If
+        - ExposeService
+        - - Description: Allow application traffic from the ALB security group
+            IpProtocol: tcp
+            FromPort: !Ref ContainerPort
+            ToPort: !Ref ContainerPort
+            SourceSecurityGroupId: !Ref ALBSecurityGroupId
+        - !Ref AWS::NoValue
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}-${SGNAME}"
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Service
+          Value: !Ref SERVICENAME
+
+  # Fargate task definition
+  ServiceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}"
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref MINCPU
+      Memory: !Ref MINMEMORY
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ContainerDefinitions:
+        - Name: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}"
+          Image: !Ref ContainerImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ServiceLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref SERVICENAME
+              mode: non-blocking
+              max-buffer-size: 25m
+      Tags:
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Service
+          Value: !Ref SERVICENAME
+
+  # Target group for Fargate tasks
+  ServiceTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}-TG"
+      VpcId: !Ref VPCID
+      TargetType: ip
+      Protocol: HTTP
+      Port: !Ref ContainerPort
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200-399'
+      Tags:
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Service
+          Value: !Ref SERVICENAME
+
+  # ECS Fargate service
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ServiceTargetGroup
+    Properties:
+      ServiceName: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}"
+      Cluster: !Ref ECSClusterName
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref ServiceTaskDefinition
+      EnableECSManagedTags: true
+      PropagateTags: TASK_DEFINITION
+      HealthCheckGracePeriodSeconds: !If
+        - ExposeService
+        - 60
+        - !Ref AWS::NoValue
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref SUBNETIDS
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+      LoadBalancers: !If
+        - ExposeService
+        - - ContainerName: !Sub "${ENV}-${ORGANIZATION}-${SERVICENAME}"
+            ContainerPort: !Ref ContainerPort
+            TargetGroupArn: !Ref ServiceTargetGroup
+        - !Ref AWS::NoValue
+      Tags:
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Service
+          Value: !Ref SERVICENAME
+
+  # Listener rule is created only when exposure is enabled
+  ALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: ExposeService
+    Properties:
+      ListenerArn: !Ref ALB
+      Priority: !Ref ListenerRulePriority
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - !Ref ALBRULEPATH
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ServiceTargetGroup
+      Tags:
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+        - Key: Service
+          Value: !Ref SERVICENAME
+
+Outputs:
+  ECSServiceName:
+    Description: ECS service name
+    Value: !GetAtt ECSService.Name
+
+  ECSClusterName:
+    Description: ECS cluster used by the service
+    Value: !Ref ECSClusterName
+
+  TaskDefinitionArn:
+    Description: Registered task definition ARN
+    Value: !Ref ServiceTaskDefinition
+
+  TaskExecutionRoleArn:
+    Description: ECS task execution role ARN
+    Value: !GetAtt TaskExecutionRole.Arn
+
+  TaskRoleArn:
+    Description: Application task role ARN
+    Value: !GetAtt TaskRole.Arn
+
+  SecurityGroupId:
+    Description: ECS service security group ID
+    Value: !GetAtt ServiceSecurityGroup.GroupId
+
+  TargetGroupArn:
+    Description: Target group ARN
+    Value: !Ref ServiceTargetGroup
+
+  CloudWatchLogGroup:
+    Description: Application log group
+    Value: !Ref ServiceLogGroup

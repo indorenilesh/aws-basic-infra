@@ -1,0 +1,289 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: VPC with public and private subnets, NAT Gateway, and security groups.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Environment and Organization"
+        Parameters:
+          - ENV
+          - ORGANIZATION
+          - VPCCIDR
+          - PUBSUB1CIDR
+          - PUBSUB2CIDR
+          - PUBSUB3CIDR
+          - PRISUB1CIDR
+          - PRISUB2CIDR
+          - PRISUB3CIDR
+
+Parameters:
+  ENV:
+    Description: "Deployment environment (DEV, STAGE, PROD)"
+    Type: String
+    AllowedValues:
+      - DEV
+      - STAGE
+      - PROD
+
+  ORGANIZATION:
+    Description: "Organization or company name"
+    Type: String
+    MinLength: 1
+    MaxLength: 30
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  VPCCIDR:
+    Description: "Enter VPC CIDR"
+    Type: String
+    Default: "10.0.0.0/16"
+
+  PUBSUB1CIDR:
+    Description: "Enter CIDR for public subnet 1"
+    Type: String
+
+  PUBSUB2CIDR:
+    Description: "Enter CIDR for public subnet 2"
+    Type: String
+
+  PUBSUB3CIDR:
+    Description: "Enter CIDR for public subnet 3"
+    Type: String
+
+  PRISUB1CIDR:
+    Description: "Enter CIDR for private subnet 1"
+    Type: String
+
+  PRISUB2CIDR:
+    Description: "Enter CIDR for private subnet 2"
+    Type: String
+
+  PRISUB3CIDR:
+    Description: "Enter CIDR for private subnet 3"
+    Type: String
+
+Resources:
+
+  # VPC
+  VPCID:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-VPC"
+        - Key: Environment
+          Value: !Ref ENV
+        - Key: Organization
+          Value: !Ref ORGANIZATION
+
+  # Internet Gateway
+  IG:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-IG"
+
+  IGAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref IG
+      VpcId: !Ref VPCID
+
+  # Public Subnets
+  PubSub1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PUBSUB1CIDR
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PubSub1"
+
+  PubSub2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PUBSUB2CIDR
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PubSub2"
+
+  PubSub3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Ref PUBSUB3CIDR
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PubSub3"
+
+  # Private Subnets
+  PriSub1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PRISUB1CIDR
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PriSub1"
+
+  PriSub2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PRISUB2CIDR
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PriSub2"
+
+  PriSub3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: !Ref PRISUB3CIDR
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PriSub3"
+
+  # Route Tables
+  PubRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PubRT"
+
+  PriRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PriRT"
+
+  # Public Route Table Associations
+  PubSub1RTassoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PubRT
+      SubnetId: !Ref PubSub1
+
+  PubSub2RTassoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PubRT
+      SubnetId: !Ref PubSub2
+
+  PubSub3RTassoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PubRT
+      SubnetId: !Ref PubSub3
+
+  # Private Route Table Associations
+  PriSub1RTassoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PriRT
+      SubnetId: !Ref PriSub1
+
+  PriSub2RTassoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PriRT
+      SubnetId: !Ref PriSub2
+
+  PriSub3RTassoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PriRT
+      SubnetId: !Ref PriSub3
+
+  # Public Default Route
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IGAttach
+    Properties:
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref IG
+      RouteTableId: !Ref PubRT
+
+  # NAT Gateway and Elastic IP
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-NatEIP"
+
+  NatGW:
+    Type: AWS::EC2::NatGateway
+    DependsOn: IGAttach
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PubSub1
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-NatGW"
+
+  # Private Default Route
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NatGW
+    Properties:
+      DestinationCidrBlock: "0.0.0.0/0"
+      RouteTableId: !Ref PriRT
+      NatGatewayId: !Ref NatGW
+
+  # Public Security Group
+  PubSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for public-facing resources"
+      GroupName: !Sub "${ENV}-${ORGANIZATION}-PubSG"
+      SecurityGroupIngress:
+        - CidrIp: "0.0.0.0/0"
+          Description: "Allow HTTP"
+          FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PubSG"
+
+  # Private Security Group
+  PriSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for private resources"
+      GroupName: !Sub "${ENV}-${ORGANIZATION}-PriSG"
+      SecurityGroupIngress:
+        - Description: "Allow SSH from public security group"
+          FromPort: 22
+          ToPort: 22
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref PubSG
+      VpcId: !Ref VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub "${ENV}-${ORGANIZATION}-PriSG"
