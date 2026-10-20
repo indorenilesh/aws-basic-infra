@@ -1,0 +1,149 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CodePipeline for an individual infrastructure repository using shared CodeBuild projects.
+
+Parameters:
+  PipelineName:
+    Type: String
+    Description: Unique name for this infrastructure pipeline (e.g., vpc-infra-pipeline).
+  GitHubOwner:
+    Type: String
+    Description: GitHub organization or username.
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name for this specific infrastructure.
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch to track.
+  CodeStarConnectionArn:
+    Type: String
+    Description: ARN of the CodeStar Connection to GitHub.
+  PlanProjectName:
+    Type: String
+    Default: shared-terraform-plan
+    Description: Name of the shared CodeBuild project for planning.
+  ApplyProjectName:
+    Type: String
+    Default: shared-terraform-apply
+    Description: Name of the shared CodeBuild project for applying.
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # S3 Bucket for Pipeline Artifacts
+  # ---------------------------------------------------------------------------
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ---------------------------------------------------------------------------
+  # IAM Role for CodePipeline
+  # ---------------------------------------------------------------------------
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelineAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                  - s3:PutObject
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: "*" # Allows invoking any shared CodeBuild projects
+              - Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref CodeStarConnectionArn
+
+  # ---------------------------------------------------------------------------
+  # CodePipeline Definition
+  # ---------------------------------------------------------------------------
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref PipelineName
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: GitHubSource
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionArn
+                FullRepositoryId: !Sub "${GitHubOwner}/${GitHubRepo}"
+                BranchName: !Ref GitHubBranch
+              OutputArtifacts:
+                - Name: SourceArtifact
+
+        - Name: ValidateAndPlan
+          Actions:
+            - Name: TerraformPlan
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: PlanArtifact
+              Configuration:
+                ProjectName: !Ref PlanProjectName
+
+        - Name: Approval
+          Actions:
+            - Name: ManualApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                CustomData: "Review the Terraform plan logs in CodeBuild before approving."
+
+        - Name: Deploy
+          Actions:
+            - Name: TerraformApply
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              InputArtifacts:
+                - Name: PlanArtifact
+              Configuration:
+                ProjectName: !Ref ApplyProjectName
+
+Outputs:
+  PipelineUrl:
+    Description: CodePipeline Console URL
+    Value: !Sub "https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${Pipeline}/view"
